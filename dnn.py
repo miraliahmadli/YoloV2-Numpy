@@ -4,6 +4,8 @@ import math
 import networkx as nx
 import numpy as np
 
+import multiprocessing
+
 class DnnInferenceEngine(object):
     def __init__(self, graph):
         self.g = graph
@@ -103,45 +105,208 @@ class DnnNode(object):
 
 class Conv2D(DnnNode):
     def __init__(self, name, in_node, kernel, strides, padding):
-        pass
+        self.in_node = in_node
+        self.batch, self.in_height, self.in_width, self.in_channels = in_node.out_shape
+        self.filter_height, self.filter_width, self.kernel_in_channels, self.out_channels = kernel.shape
+
+        assert self.in_channels == self.kernel_in_channels, \
+        f"Shape of filters must be same to number of input channels, {self.kernel_in_channels} is not equal to {self.in_channels}"
+
+        assert padding in ["SAME", "VALID"], \
+        f"Invalid padding name: {padding}, should be either SAME or VALID"
+
+        self.name = name
+        print(self.name)
+        self.kernel = kernel
+        self.padding = (padding == "SAME")
+        self.strides = strides.shape
+
+        self.pad_h = 0
+        self.pad_w = 0
+        if self.padding:
+            # ((s-1) * x + k -s)/ 2
+            self.pad_h = (self.strides[1] - 1) * self.in_height + self.filter_height) - self.strides[1]) // 2
+            self.pad_w = (self.strides[2] - 1) * self.in_width + self.filter_width) - self.strides[2]) // 2
+        
+        self.output_height  = (self.in_height - self.filter_height + 2 * self.pad_h) / self.strides[1] + 1
+        self.output_width   = (self.in_width - self.filter_width + 2 * self.pad_w) / self.strides[2] + 1
+        self.result = np.zeros((self.batch, self.output_height, self.output_width, self.out_channels))
 
     def run(self):
-        pass
+        def multi(b, i, j, k):
+            for h in range(self.filter_height):
+                for w in range(self.filter_width):
+                    for q in range(self.in_channels):
+                        self.result[b, i, j, k] +=
+                            (self.in_node.result[b, self.strides[1] * i + h, self.strides[2] * j + w, q] * 
+                                self.kernel[h, w, q, k])
+            # average
+            self.result[b, i, j, k] /= (self.filter_width * self.filter_height * self.in_channels)
 
+
+        for b in range(self.batch):
+            for i in range(self.output_height):
+                for j in range(self.output_width):
+                    for k in range(self.out_channels):
+                        # can be multiprocessed
+                        for h in range(self.filter_height):
+                            for w in range(self.filter_width):
+                                for q in range(self.in_channels):
+                                    self.result[b, i, j, k] +=
+                                        (self.in_node.result[b, self.strides[1] * i + h, self.strides[2] * j + w, q] * 
+                                            self.kernel[h, w, q, k])
+                        
+                        # average
+                        self.result[b, i, j, k] /= (self.filter_width * self.filter_height * self.in_channels)
+
+        self.out_shape = self.result.shape
+
+        # output[b, i, j, k] =
+        #     sum_{di, dj, q} input[b, strides[1] * i + di, strides[2] * j + dj, q]
+        #                     * filter[di, dj, q, k]
 class BiasAdd(DnnNode):
     def __init__(self, name, in_node, biases):
-        pass
+        self.in_node = in_node
+        self.prev_res =  self.in_node.result
+        self.batch, self.in_height, self.in_width, self.in_channels = in_node.out_shape
+        assert self.in_channels == biases.shape[0], \
+        f"Shape of biases must be equal to number of input channels, {biases.shape[0]} is not equal to {self.in_channels}"
+
+        self.biases = biases
+        self.name = name
+        print(self.name)
+        self.result = np.zeros(self.in_node.out_shape)
+        self.out_shape = self.result.shape
 
     def run(self):
-        pass
+        #self.result = np.zeros(self.in_node.out_shape) #self.in_node.result[:,:,:,:] #np.zeros(self.in_node.out_shape)
+        def multi(b, h, w, c):
+            self.result[b, h, w, c] = self.prev_res[b, h, w, c] + self.biases[c]
+        
+        for b in range(self.batch):
+            for h in range(self.in_height):
+                for w in range(self.in_width):
+                    for c in range(self.in_channels):
+                        self.result[b, h, w, c] = self.prev_res[b, h, w, c] + self.biases[c]
 
 class MaxPool2D(DnnNode):
     def __init__(self, name, in_node, ksize, strides, padding):
-        pass
+        self.batch, self.in_height, self.in_width, self.in_channels = in_node.out_shape
+        self.out_channels = self.in_channels
+        assert padding in ["SAME", "VALID"], \
+        f"Invalid padding name: {padding}, should be either SAME or VALID" 
+
+        self.strides = strides.shape
+        self.ksize = ksizes.shape
+        self.name = name
+        print(self.name)
+        self.in_node = in_node
+        
+        self.padding = (padding == "SAME")
+
+        self.pad_h = 0
+        self.pad_w = 0
+        if self.padding:
+            # ((s-1) * x + k -s)/ 2
+            self.pad_h = (self.strides[1] - 1) * self.in_height + self.ksize[1]) - self.strides[1]) // 2
+            self.pad_w = (self.strides[2] - 1) * self.in_width + self.ksize[2]) - self.strides[2]) // 2
+
+            self.prev_res = np.zeros(self.in_node.out_shape)
+            prev_copy = np.copy(self.in_node.result)
+            self.prev_res[:, self.pad_h : -self.pad_h, self.pad_w : -self.pad_w, :] = prev_copy
+        else:
+            self.prev_res = np.copy(self.in_node.result)
+        
+        self.output_height  = (self.in_height - self.ksize[1] + 2 * self.pad_h) / self.strides[1] + 1
+        self.output_width   = (self.in_width - self.ksize[2] + 2 * self.pad_w) / self.strides[2] + 1
+        self.result = np.zeros((self.batch, self.output_height, self.output_width, self.out_channels))
+        self.out_shape = self.result.shape
         
     def run(self):
-        pass
+        def get_max_from_window(b, x, y, c):
+            return np.argmax(self.prev_res[ b, 
+                                            x : min(x + self.ksize, self.in_height), 
+                                            y : min(y + self.ksize, self.in_width), 
+                                            c], 
+                             axis = None)
+
+        def multi(b, i, j, c):
+            # m = get_max_from_window(b, i, j, c)
+            self.result[b, i, j, c] = get_max_from_window(b, i, j, c)
+
+        for b in range(self.batch):
+            for i in range(0, self.output_height, self.strides[1]):
+                for j in range(0, self.output_width, self.strides[2]):
+                    for c in range(self.out_channels):
+                        m = get_max_from_window(b, i, j, c)
+                        self.result[b, i, j, c] = m
+
 
 class BatchNorm(DnnNode):
     def __init__(self, name, in_node, mean, variance, gamma, epsilon):
-        pass
+        self.in_node = in_node
+        self.batch, self.in_height, self.in_width, self.in_channels = in_node.out_shape
+
+        assert self.in_channels == mean.shape[0], \
+        f"Shape of biases must be equal to number of input channels, {mean.shape[0]} is not equal to {self.in_channels}"
+
+        assert self.in_channels == variance.shape[0], \
+        f"Shape of variance must be equal to number of input channels, {variance.shape[0]} is not equal to {self.in_channels}"
+
+        assert self.in_channels == gamma.shape[0], \
+        f"Shape of gamma must be equal to number of input channels, {gamma.shape[0]} is not equal to {self.in_channels}"
+
+        # assert self.in_channels == epsilon.shape[0], \
+        # f"Shape of epsilon must be equal to number of input channels, {epsilon.shape[0]} is not equal to {self.in_channels}"
+        
+        self.name = name
+        print(self.name)
+
+        self.mean = mean
+        self.epsilon = epsilon
+        self.gamma = gamma
+        self.variance = variance
 
     def run(self):
-        pass
+        self.result = np.copy(self.in_node.result)#np.zeros(self.in_node.out_shape)
+        for b in range(self.batch):
+            for h in range(self.in_height):
+                for w in range(self.in_width):
+                    for c in range(self.in_channels):
+                        self.result[b, h, w, c] = 
+                            (self.result[b, h, w, c] - self.mean[c]) / np.sqrt(self.variance[c] + self.epsilon)
+        self.out_shape = self.result.shape
 
 class LeakyReLU(DnnNode):
     def __init__(self, name, in_node):
-        pass
+        self.in_node = in_node
+        self.batch, self.in_height, self.in_width, self.in_channels = in_node.out_shape
+        self.alpha = 0.01
+        self.name = name
+        print(self.name)
+        self.result = np.copy(self.in_node.result)
+        self.out_shape = self.result.shape
 
     def run(self):
-        pass
+        # self.result[self.result < 0] *= self.alpha
+        def multi(b, h, w, c):
+            if self.result[b, h, w, c] < 0:
+                self.result[b, h, w, c] *= self.alpha
+        for b in range(self.batch):
+            for h in range(self.in_height):
+                for w in range(self.in_width):
+                    for c in range(self.in_channels):
+                        if self.result[b, h, w, c] < 0:
+                            self.result[b, h, w, c] *= self.alpha
 
 
 # Do not modify below
 class Input(DnnNode):
     def __init__(self, name, in_shape):
         self.name = name
+        # print(self.name)
         self.in_shape = in_shape 
+        self.out_shape =in_shape
         self.result = np.ndarray(self.in_shape)
 
     def set_input(self, tensor):

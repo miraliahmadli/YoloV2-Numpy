@@ -50,7 +50,7 @@ class YOLO_V2_TINY(object):
         bias9   =   self.g.create_bias_add(conv9, y2t_w[3]["biases"])
         bn9     =   self.g.create_batch_norm(bias9, y2t_w[3]["moving_mean"], y2t_w[3]["moving_variance"], y2t_w[3]["gamma"], 1e-5)       
         l10     =   self.g.create_leaky_relu(bn9)
-        p11     =  self.g.create_max_pool2d(l10, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+        p11     =   self.g.create_max_pool2d(l10, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
 
         conv12  =   self.g.create_conv2d(p11, y2t_w[4]["kernel"], strides=[1, 1, 1, 1], padding='SAME')
         bias12  =   self.g.create_bias_add(conv12, y2t_w[4]["biases"])
