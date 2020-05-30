@@ -4,11 +4,6 @@ import math
 import networkx as nx
 import numpy as np
 
-import multiprocessing
-import itertools
-# from multiprocessing import set_start_method
-num_cpu = multiprocessing.cpu_count()
-
 class DnnInferenceEngine(object):
     def __init__(self, graph):
         self.g = graph
