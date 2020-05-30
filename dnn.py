@@ -15,15 +15,12 @@ class DnnInferenceEngine(object):
 
     def run(self, tin):
         self.g.in_node.set_input(tin)
-        # print(self.g.in_node.result)
         out = {}
         currents = [self.g.in_node]
         done = set()
-        # i = 0
         while (len(currents) != 0):
             nexts = []
             for current in currents:
-                # print(current.result)
                 skip_current = False
                 predecessors = self.g.G.predecessors(current)
                 for predecessor in predecessors:
@@ -33,10 +30,6 @@ class DnnInferenceEngine(object):
                 if skip_current:
                     continue
                 current.run()
-                # if i != 0:
-                #     tf_current = np.load("../YoloTinyV2/intermediate/layer_{}.npy".format(i))
-                #     print(np.sum(np.absolute(tf_current - current.result)))
-                # i+=1
                 if self.g.is_out_node(current):
                     out = current.result
                 done.add(current)
