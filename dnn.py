@@ -144,18 +144,6 @@ class Conv2D(DnnNode):
         self.result = np.zeros((batch, output_height, output_width, out_channels))
         self.out_shape = self.result.shape
         self.filter_height, self.filter_width, self.in_channels, out_channels = kernel.shape
-    
-    def multi(self, vals):
-        print("Yup")
-        b, i, j, k = vals
-        # batch, output_height, output_width, out_channels = self.out_shape
-        print(self.prev_res)
-        for h in range(self.filter_height):
-            for w in range(self.filter_width):
-                for q in range(self.in_channels):
-                    self.result[b, i, j, k] += \
-                        (self.prev_res[b, self.strides[1] * i + h, self.strides[2] * j + w, q] * 
-                            self.kernel[h, w, q, k])
 
     def run(self):
         filter_height, filter_width, in_channels, out_channels = self.kernel.shape
@@ -177,12 +165,6 @@ class Conv2D(DnnNode):
                                     self.result[b, i, j, k] += \
                                         (self.prev_res[b, self.strides[1] * i + h, self.strides[2] * j + w, q] * 
                                             self.kernel[h, w, q, k])
-        # arrays = [range(batch), range(output_height), range(output_width), range(out_channels)]
-        # args = itertools.product(*arrays)
-        # args = list(range(batch))
-        # with multiprocessing.Pool(num_cpu) as p:
-        #     p.map(self.multi, args)
-            # p.map_async(self.multi, args)
 
 class BiasAdd(DnnNode):
     def __init__(self, name, in_node, biases):
@@ -198,11 +180,6 @@ class BiasAdd(DnnNode):
         self.out_shape = self.result.shape
         self.prev_res= np.zeros(in_node.out_shape)
 
-    def multi(self, vals):
-        b, h, w, c = vals
-        self.prev_res = self.in_node.result
-        self.result[b, h, w, c] = self.prev_res[b, h, w, c] + self.biases[c]
-
     def run(self):
         self.prev_res = self.in_node.result
         batch, output_height, output_width, out_channels = self.out_shape
@@ -211,11 +188,6 @@ class BiasAdd(DnnNode):
                 for w in range(output_width):
                     for c in range(out_channels):
                         self.result[b, h, w, :] = self.prev_res[b, h, w, :] + self.biases
-        # arrays = [range(batch), range(output_height), range(output_width), range(out_channels)]
-        # args = itertools.product(*arrays)
-        # with multiprocessing.Pool(num_cpu) as p:
-        #     p.map(self.multi, args) 
-        
 
 class MaxPool2D(DnnNode):
     def __init__(self, name, in_node, ksize, strides, padding):
@@ -249,33 +221,18 @@ class MaxPool2D(DnnNode):
         pad_h = 0
         pad_w = 0
         if self.padding:
-            # ((s-1) * x + k -s)/ 2
             pad_h = self.ksize[1] - 1
             pad_w = self.ksize[2] - 1
-            # if pad_h == 0 and pad_w == 0:
-            #     self.prev_res = in_node.result
-            # else:
             self.prev_res[:, pad_h//2 : -((pad_h+1)//2), pad_w//2 : -((pad_w+1)//2), :] = self.in_node.result
         else:
             self.prev_res = self.in_node.result
         batch, in_height, in_width, in_channels = self.prev_res.shape
         batch, output_height, output_width, out_channels = self.out_shape
-        def get_max_from_window(b, i, j, c):
-            return np.amax(self.prev_res[b, i * self.strides[1] : i * self.strides[1] + self.ksize[1], j * self.strides[2] : j * self.strides[2] + self.ksize[2], c])
-            # return np.amax(self.prev_res[:, x : x + self.ksize[1], y : y + self.ksize[2], :], axis = (1, 2))
-            # max_num = float("-inf")
-            # for i in range(x, min(x + self.ksize[1], in_height)):
-            #     for j in range(y, min(y + self.ksize[2], in_width)):
-            #         if self.prev_res[b, i, j, c] > max_num:
-            #             max_num = self.prev_res[b, i, j, c]
-            # return max_num
-
 
         for b in range(batch):
             for i in range(output_height):
                 for j in range(output_width):
                     for c in range(out_channels):
-                        # m = get_max_from_window(b, i, j, c)
                         self.result[b, i, j, c] = \
                             np.amax(self.prev_res[b, i * self.strides[1] : i * self.strides[1] + self.ksize[1], 
                                     j * self.strides[2] : j * self.strides[2] + self.ksize[2], c])
@@ -306,11 +263,6 @@ class BatchNorm(DnnNode):
         self.out_shape = self.result.shape
         self.prev_res = np.zeros(in_node.out_shape)
 
-    def multi(self, vals):
-        b, h, w, c = vals
-        self.result[b, h, w, c] = \
-            (self.prev_res[b, h, w, c] - self.mean[c]) / np.sqrt(self.variance[c] + self.epsilon)
-
     def run(self):
         self.prev_res = self.in_node.result
         batch, output_height, output_width, out_channels = self.out_shape
@@ -330,14 +282,7 @@ class LeakyReLU(DnnNode):
         print(self.name)
         self.result=  np.zeros(in_node.out_shape)
         self.out_shape = self.result.shape
-    
-    def multi(self, vals):
-        b, h, w, c = vals
-        if self.prev_res[b, h, w, c] < 0:
-            self.result[b, h, w, c] = self.prev_res[b, h, w, c] * self.alpha
-        else:
-            self.result[b, h, w, c] = self.prev_res[b, h, w, c]
-    
+
     def run(self):
         self.result = np.copy(self.in_node.result)
         self.result[self.result < 0] *= self.alpha
